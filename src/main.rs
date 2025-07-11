@@ -27,7 +27,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions::default();
 
     eframe::run_native(
-        "Catálogo Elétrico",
+        "Catálogo Elétrico de Preços",
         options,
         Box::new(|cc| {
             let app = MyApp::new(cc);
