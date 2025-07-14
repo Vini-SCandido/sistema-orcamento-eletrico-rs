@@ -156,6 +156,7 @@ impl MyApp {
                 self.status_message_timer = None;
             }
         }
+        self.selected_item_id = None;
     }
 
     fn update_item(&mut self) {
@@ -346,6 +347,24 @@ impl MyApp {
         self.status_message_timer = None;
         Ok(())
     }
+
+    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
+        ctx.input(|input| {
+            if input.key_pressed(egui::Key::Escape) && self.selected_item_id.is_some() {
+                self.selected_item_id = None;
+                self.new_description.clear();
+                self.new_brand.clear();
+                self.new_vendor.clear();
+                self.new_price.clear();
+            }
+
+            if input.key_pressed(egui::Key::Delete) {
+                if self.selected_item_id.is_some() {
+                    self.confirm_delete = true;
+                }
+            }
+        });
+    }
 }
 
 struct InfraItem {
@@ -367,7 +386,7 @@ impl eframe::App for MyApp {
             egui::Window::new("Notificação")
                 .collapsible(false)
                 .resizable(false)
-                .anchor(egui::Align2::RIGHT_TOP, [-50.0, 30.0])
+                .anchor(egui::Align2::CENTER_TOP, [0.0, 30.0])
                 .show(ctx, |ui| {
                     ui.label(status_label);
                 });
@@ -403,6 +422,8 @@ impl eframe::App for MyApp {
                 });
         }
 
+        self.handle_keyboard_shortcuts(ctx);
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_enabled_ui(!self.confirm_delete, |ui| {
                 ui.heading("Cadastro de Materiais Elétricos");
@@ -421,6 +442,7 @@ impl eframe::App for MyApp {
                         ui.label("Marca:");
                         ui.add(
                             TextEdit::singleline(&mut self.new_brand)
+                                .hint_text("Sem Marca")
                                 .min_size(vec2(desired_text_with, 0.0)),
                         );
                         ui.end_row();
@@ -443,10 +465,7 @@ impl eframe::App for MyApp {
                 ui.horizontal(|ui| {
                     if ui.button("Adicionar").clicked() {
                         if let Ok(price) = self.new_price.replace(",", ".").parse::<f32>() {
-                            if !self.new_description.is_empty()
-                                && !self.new_brand.is_empty()
-                                && !self.new_vendor.is_empty()
-                            {
+                            if !self.new_description.is_empty() && !self.new_vendor.is_empty() {
                                 self.insert_item(
                                     &self.new_description.clone(),
                                     &self.new_brand.clone(),
@@ -457,13 +476,23 @@ impl eframe::App for MyApp {
                                 self.new_brand.clear();
                                 self.new_vendor.clear();
                                 self.new_price.clear();
+                            } else {
+                                self.status_message =
+                                    Some("Campo de descrição ou fabricante está vazio".into());
+                                self.status_message_timer = None;
                             }
                         }
                     }
 
                     if self.selected_item_id.is_some() {
                         if ui.button("Atualizar").clicked() {
-                            self.update_item();
+                            if !self.new_description.is_empty() && !self.new_vendor.is_empty() {
+                                self.update_item();
+                            } else {
+                                self.status_message =
+                                    Some("Campo de descrição ou fabricante está vazio".into());
+                                self.status_message_timer = None;
+                            }
                         }
                     }
 
@@ -540,14 +569,20 @@ impl eframe::App for MyApp {
                         }) {
                             let is_selected = Some(item.id) == self.selected_item_id;
                             let price_str = format_money(item.price);
+                            let brand_str = if !item.brand.is_empty() {
+                                format!(" [{}]", item.brand)
+                            } else {
+                                "".to_string()
+                            };
                             let label = format!(
-                                "[{}] [{}]\t{}\tR$ {}\t{}",
+                                "[{}]{} {} R$ {} {}",
                                 item.vendor,
-                                item.brand,
+                                brand_str,
                                 item.description,
                                 price_str,
                                 item.updated_at
                             );
+
                             let selectable_label_response =
                                 ui.selectable_label(is_selected, &label);
                             if selectable_label_response.clicked_by(egui::PointerButton::Primary) {
@@ -568,8 +603,8 @@ impl eframe::App for MyApp {
                             if selectable_label_response.clicked_by(egui::PointerButton::Secondary)
                             {
                                 let label_to_copy = format!(
-                                    "{}\t\t\t\t{}\t{}",
-                                    item.description, item.vendor, price_str
+                                    "{} {}\t\t\t\t{}\t{}",
+                                    item.description, item.brand, item.vendor, price_str
                                 );
                                 ctx.copy_text(label_to_copy);
                                 self.status_message =
