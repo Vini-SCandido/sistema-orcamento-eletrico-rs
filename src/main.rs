@@ -147,7 +147,7 @@ impl MyApp {
             (description, brand, vendor, price, now),
         ) {
             Ok(_) => {
-                self.status_message = Some("Item inserido. Atualizado, se existente".to_string());
+                self.status_message = Some("Item inserido".to_string());
                 self.status_message_timer = None;
                 self.load_items();
             }
