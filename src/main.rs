@@ -7,7 +7,7 @@ use std::{
 };
 
 use chrono::Utc;
-use eframe::egui::{self, TextEdit, vec2};
+use eframe::egui::{self, Button, TextEdit, vec2};
 use num_format::{Locale, ToFormattedString};
 
 fn init_db() -> rusqlite::Result<rusqlite::Connection> {
@@ -51,6 +51,7 @@ struct MyApp {
     conn: rusqlite::Connection,
     selected_item_id: Option<i32>,
     items: Vec<InfraItem>,
+    visible_items: Vec<InfraItem>,
     new_description: String,
     new_brand: String,
     new_vendor: String,
@@ -59,6 +60,7 @@ struct MyApp {
     status_message_timer: Option<std::time::Instant>,
     // copied_feedback_timer: Option<std::time::Instant>,
     search_query: String,
+    last_search_query: String,
     show_outdated: bool,
     confirm_delete: bool,
 }
@@ -66,7 +68,7 @@ struct MyApp {
 impl MyApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut visuals = egui::Visuals::light(); // or .dark()
-        visuals.selection.bg_fill = egui::Color32::from_rgb(0, 100, 200);
+        visuals.selection.bg_fill = egui::Color32::from_rgb(255, 212, 128);
         visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
         cc.egui_ctx.set_visuals(visuals);
 
@@ -75,6 +77,7 @@ impl MyApp {
             conn,
             selected_item_id: None,
             items: vec![],
+            visible_items: vec![],
             new_description: String::new(),
             new_brand: String::new(),
             new_vendor: String::new(),
@@ -83,12 +86,14 @@ impl MyApp {
             status_message_timer: None,
             // copied_feedback_timer: None,
             search_query: String::new(),
+            last_search_query: String::new(),
             show_outdated: false,
             confirm_delete: false,
         };
         app.load_items();
         app
     }
+
     fn load_items(&mut self) {
         let mut stmt = self
             .conn
@@ -108,6 +113,7 @@ impl MyApp {
             })
             .unwrap();
         self.items = item_iter.filter_map(Result::ok).collect();
+        self.visible_items = self.items.clone();
     }
 
     pub fn load_outdated_items(&mut self) {
@@ -134,6 +140,7 @@ impl MyApp {
             .unwrap();
 
         self.items = item_iter.filter_map(Result::ok).collect();
+        self.visible_items = self.items.clone();
     }
 
     fn insert_item(&mut self, description: &str, brand: &str, vendor: &str, price: f32) {
@@ -367,6 +374,7 @@ impl MyApp {
     }
 }
 
+#[derive(Clone)]
 struct InfraItem {
     id: i32,
     description: String,
@@ -546,7 +554,7 @@ impl eframe::App for MyApp {
                     ui.label("Buscar:");
                     ui.add(
                         TextEdit::singleline(&mut self.search_query)
-                            .hint_text("Item ou fornecedor")
+                            .hint_text("Item, fornecedor ou marca")
                             .min_size(vec2(300.0, 0.0)),
                     );
                     if ui.button("Limpar Pesquisa").clicked() {
@@ -556,63 +564,142 @@ impl eframe::App for MyApp {
 
                 ui.label("Itens Cadastrados:");
 
-                let search = self.search_query.to_lowercase();
+                if self.search_query != self.last_search_query {
+                    self.last_search_query = self.search_query.clone();
+
+                    let search = self.search_query.to_lowercase();
+
+                    self.visible_items = if search.is_empty() {
+                        self.items.clone()
+                    } else {
+                        self.items
+                            .iter()
+                            .filter(|item| {
+                                item.description.to_lowercase().contains(&search)
+                                    || item.vendor.to_lowercase().contains(&search)
+                                    || item.brand.to_lowercase().contains(&search)
+                            })
+                            .cloned()
+                            .collect()
+                    };
+                }
+
+                let row_height = 24.0;
+                let total_rows = self.visible_items.len();
 
                 egui::ScrollArea::vertical()
-                    .max_width(ui.available_width())
-                    .show(ui, |ui| {
+                    .auto_shrink([false; 2])
+                    .show_rows(ui, row_height, total_rows, |ui, row_range| {
                         ui.set_width(ui.available_width());
-                        for item in self.items.iter().filter(|item| {
-                            item.description.to_lowercase().contains(&search)
-                                || item.vendor.to_lowercase().contains(&search)
-                                || item.brand.to_lowercase().contains(&search)
-                        }) {
-                            let is_selected = Some(item.id) == self.selected_item_id;
-                            let price_str = format_money(item.price);
-                            let brand_str = if !item.brand.is_empty() {
-                                format!(" [{}]", item.brand)
-                            } else {
-                                "".to_string()
-                            };
-                            let label = format!(
-                                "[{}]{} {} R$ {} {}",
-                                item.vendor,
-                                brand_str,
-                                item.description,
-                                price_str,
-                                item.updated_at
-                            );
-
-                            let selectable_label_response =
-                                ui.selectable_label(is_selected, &label);
-                            if selectable_label_response.clicked_by(egui::PointerButton::Primary) {
-                                if self.selected_item_id == Some(item.id) {
-                                    self.selected_item_id = None; // unselect if clicked again
-                                    self.new_description.clear();
-                                    self.new_brand.clear();
-                                    self.new_vendor.clear();
-                                    self.new_price.clear();
+                        for row in row_range {
+                            if let Some(item) = self.visible_items.get(row) {
+                                let is_selected = Some(item.id) == self.selected_item_id;
+                                let price_str = format_money(item.price);
+                                let brand_str = if !item.brand.is_empty() {
+                                    format!(" [{}]", item.brand)
                                 } else {
-                                    self.selected_item_id = Some(item.id); // select item
-                                    self.new_description = item.description.clone();
-                                    self.new_brand = item.brand.clone();
-                                    self.new_vendor = item.vendor.clone();
-                                    self.new_price = price_str.clone().replace(".", "");
+                                    "".to_string()
+                                };
+                                let label = format!(
+                                    "[{}]{} {} R$ {} {}",
+                                    item.vendor,
+                                    brand_str,
+                                    item.description,
+                                    price_str,
+                                    item.updated_at
+                                );
+
+                                let selectable_label_response = ui.add(
+                                    Button::new(&label)
+                                        .selected(is_selected)
+                                        .min_size(vec2(row_height, 0.0)),
+                                );
+                                // ui.selectable_label(is_selected, &label);
+                                if selectable_label_response
+                                    .clicked_by(egui::PointerButton::Primary)
+                                {
+                                    if self.selected_item_id == Some(item.id) {
+                                        self.selected_item_id = None; // unselect if clicked again
+                                        self.new_description.clear();
+                                        self.new_brand.clear();
+                                        self.new_vendor.clear();
+                                        self.new_price.clear();
+                                    } else {
+                                        self.selected_item_id = Some(item.id); // select item
+                                        self.new_description = item.description.clone();
+                                        self.new_brand = item.brand.clone();
+                                        self.new_vendor = item.vendor.clone();
+                                        self.new_price = price_str.clone().replace(".", "");
+                                    }
+                                }
+
+                                if selectable_label_response
+                                    .clicked_by(egui::PointerButton::Secondary)
+                                {
+                                    let label_to_copy = format!(
+                                        "{} {}\t\t\t\t{}\t{}",
+                                        item.description, item.brand, item.vendor, price_str
+                                    );
+                                    ctx.copy_text(label_to_copy);
+                                    self.status_message =
+                                        Some("Copiado para a área de transferência".into());
+                                    self.status_message_timer = None;
+                                    // self.copied_feedback_timer = Some(std::time::Instant::now());
                                 }
                             }
-                            if selectable_label_response.clicked_by(egui::PointerButton::Secondary)
-                            {
-                                let label_to_copy = format!(
-                                    "{} {}\t\t\t\t{}\t{}",
-                                    item.description, item.brand, item.vendor, price_str
-                                );
-                                ctx.copy_text(label_to_copy);
-                                self.status_message =
-                                    Some("Copiado para a área de transferência".into());
-                                self.status_message_timer = None;
-                                // self.copied_feedback_timer = Some(std::time::Instant::now());
-                            }
                         }
+                        // for item in self.items.iter().filter(|item| {
+                        //     item.description.to_lowercase().contains(&search)
+                        //         || item.vendor.to_lowercase().contains(&search)
+                        //         || item.brand.to_lowercase().contains(&search)
+                        // }) {
+                        //     let is_selected = Some(item.id) == self.selected_item_id;
+                        //     let price_str = format_money(item.price);
+                        //     let brand_str = if !item.brand.is_empty() {
+                        //         format!(" [{}]", item.brand)
+                        //     } else {
+                        //         "".to_string()
+                        //     };
+                        //     let label = format!(
+                        //         "[{}]{} {} R$ {} {}",
+                        //         item.vendor,
+                        //         brand_str,
+                        //         item.description,
+                        //         price_str,
+                        //         item.updated_at
+                        //     );
+
+                        //     let selectable_label_response =
+                        //         ui.selectable_label(is_selected, &label);
+                        //     if selectable_label_response.clicked_by(egui::PointerButton::Primary) {
+                        //         if self.selected_item_id == Some(item.id) {
+                        //             self.selected_item_id = None; // unselect if clicked again
+                        //             self.new_description.clear();
+                        //             self.new_brand.clear();
+                        //             self.new_vendor.clear();
+                        //             self.new_price.clear();
+                        //         } else {
+                        //             self.selected_item_id = Some(item.id); // select item
+                        //             self.new_description = item.description.clone();
+                        //             self.new_brand = item.brand.clone();
+                        //             self.new_vendor = item.vendor.clone();
+                        //             self.new_price = price_str.clone().replace(".", "");
+                        //         }
+                        //     }
+
+                        //     if selectable_label_response.clicked_by(egui::PointerButton::Secondary)
+                        //     {
+                        //         let label_to_copy = format!(
+                        //             "{} {}\t\t\t\t{}\t{}",
+                        //             item.description, item.brand, item.vendor, price_str
+                        //         );
+                        //         ctx.copy_text(label_to_copy);
+                        //         self.status_message =
+                        //             Some("Copiado para a área de transferência".into());
+                        //         self.status_message_timer = None;
+                        //         // self.copied_feedback_timer = Some(std::time::Instant::now());
+                        //     }
+                        // }
                     });
                 // if let Some(t) = self.copied_feedback_timer {
                 //     if t.elapsed().as_secs_f32() < 0.2 {
